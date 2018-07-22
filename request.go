@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 )
 
 const (
@@ -42,6 +43,7 @@ type Config struct {
 	ResponseType string
 	IsBot        bool
 	Body         map[string]interface{}
+	Timeout      *time.Duration
 }
 
 func checkConfig(config Config) error {
@@ -111,6 +113,10 @@ func Request(config Config) (*http.Response, string, error) {
 			encodedURL, _ := url.Parse(fmt.Sprintf("%s?%s", config.URL, values.Encode()))
 			request.URL = encodedURL
 		}
+	}
+
+	if config.Timeout != nil {
+		client.Timeout = *config.Timeout
 	}
 
 	resp, err := client.Do(request)
