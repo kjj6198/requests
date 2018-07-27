@@ -2,10 +2,12 @@ package requests
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"sync"
@@ -33,7 +35,18 @@ type safeClient struct {
 	mutex  *sync.RWMutex
 }
 
-var client = http.DefaultClient
+var defaultTransport = &http.Transport{
+	Dial: (&net.Dialer{
+		KeepAlive: 600 * time.Second,
+	}).Dial,
+	MaxIdleConns:        100,
+	MaxIdleConnsPerHost: 100,
+}
+
+var client = &http.Client{
+	Transport: defaultTransport,
+	Timeout:   1 * time.Second, // default to 5 second to timeout a request
+}
 
 type Config struct {
 	Headers      map[string]string
@@ -70,15 +83,21 @@ func setHeaders(c *Config, req *http.Request) error {
 	return nil
 }
 
-func Request(config Config) (*http.Response, string, error) {
+func Request(ctx context.Context, config Config) (*http.Response, string, error) {
 	err := checkConfig(config)
 	if err != nil {
 		panic(err)
 	}
 
+	if ctx != nil {
+		ctx, _ = context.WithCancel(context.Background())
+	}
+
 	request := &http.Request{
 		Header: make(http.Header),
 	}
+
+	request = request.WithContext(ctx)
 
 	setHeaders(&config, request)
 	if !config.IsBot {
@@ -120,6 +139,13 @@ func Request(config Config) (*http.Response, string, error) {
 	}
 
 	resp, err := client.Do(request)
+
+	select {
+	case <-ctx.Done():
+		fmt.Println("TIMEOUT")
+	default:
+		fmt.Println("DONT REQUEST")
+	}
 	if err != nil {
 		log.Fatal(err)
 		return nil, "", err
@@ -128,35 +154,4 @@ func Request(config Config) (*http.Response, string, error) {
 	respData, err := ioutil.ReadAll(resp.Body)
 
 	return resp, string(respData), err
-}
-
-func GET(url string, params *url.Values, contentType string) (*http.Response, string, error) {
-	config := Config{
-		URL:     url,
-		Method:  "GET",
-		Headers: make(map[string]string),
-	}
-
-	if params != nil {
-		config.Params = *params
-	}
-
-	if contentType != "" {
-		config.Headers["Content-Type"] = contentType
-	}
-
-	res, body, err := Request(config)
-
-	return res, body, err
-}
-
-func POST(url string, body map[string]interface{}) (*http.Response, string, error) {
-	config := Config{
-		URL:    url,
-		Method: "POST",
-	}
-
-	config.Body = body
-
-	return Request(config)
 }
