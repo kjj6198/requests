@@ -37,15 +37,19 @@ type safeClient struct {
 
 var defaultTransport = &http.Transport{
 	Dial: (&net.Dialer{
-		KeepAlive: 600 * time.Second,
+		KeepAlive: 5 * time.Second,
+		Timeout:   2 * time.Second, // TCP connection timeout
 	}).Dial,
-	MaxIdleConns:        100,
-	MaxIdleConnsPerHost: 100,
+	TLSHandshakeTimeout:   5 * time.Second,
+	ResponseHeaderTimeout: 5 * time.Second,
+	IdleConnTimeout:       5 * time.Second,
+	MaxIdleConns:          100,
+	MaxIdleConnsPerHost:   100,
 }
 
 var client = &http.Client{
 	Transport: defaultTransport,
-	Timeout:   1 * time.Second, // default to 5 second to timeout a request
+	Timeout:   2 * time.Second, // default to 5 second to timeout a request
 }
 
 type Config struct {
@@ -57,15 +61,16 @@ type Config struct {
 	IsBot        bool
 	Body         map[string]interface{}
 	Timeout      *time.Duration
+	OnTimeout    func(client *http.Client) // client timeout
 }
 
 func checkConfig(config Config) error {
-	if config.URL == "" || config.Method == "nil" {
-		return fmt.Errorf("URL and method can not be nil.")
+	if config.URL == "" || config.Method == "" {
+		return fmt.Errorf("URL and method can not be nil")
 	}
 
 	if config.Method == MethodPost && config.Body == nil {
-		return fmt.Errorf("method post must have body.")
+		return fmt.Errorf("method post must have body")
 	}
 
 	return nil
@@ -73,7 +78,7 @@ func checkConfig(config Config) error {
 
 func setHeaders(c *Config, req *http.Request) error {
 	if c.Headers == nil {
-		return fmt.Errorf("header is nil.")
+		return fmt.Errorf("header is nil")
 	}
 
 	for k, v := range c.Headers {
@@ -95,6 +100,10 @@ func Request(ctx context.Context, config Config) (*http.Response, string, error)
 
 	request := &http.Request{
 		Header: make(http.Header),
+	}
+
+	if ctx == nil {
+		panic("ctx param can not be nil")
 	}
 
 	request = request.WithContext(ctx)
@@ -142,10 +151,13 @@ func Request(ctx context.Context, config Config) (*http.Response, string, error)
 
 	select {
 	case <-ctx.Done():
-		fmt.Println("TIMEOUT")
+		log.Println("DONE REQUEST")
 	default:
-		fmt.Println("DONT REQUEST")
+		if config.OnTimeout != nil {
+			config.OnTimeout(client)
+		}
 	}
+
 	if err != nil {
 		log.Fatal(err)
 		return nil, "", err
