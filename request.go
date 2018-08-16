@@ -75,7 +75,7 @@ func checkConfig(config Config) error {
 
 func setHeaders(c *Config, req *http.Request) error {
 	if c.Headers == nil {
-		return fmt.Errorf("header is nil")
+		return ErrHeaderIsNil
 	}
 
 	for k, v := range c.Headers {
@@ -98,14 +98,11 @@ func handleTimeout(ctx context.Context, req *http.Request, reqCh chan *http.Requ
 	}
 }
 
+// Request will do a safe request by providing more robust client
 func Request(ctx context.Context, config Config) (*http.Response, string, error) {
 	err := checkConfig(config)
 	if err != nil {
 		panic(err)
-	}
-
-	if ctx != nil {
-		ctx, _ = context.WithCancel(context.Background())
 	}
 
 	request := &http.Request{
@@ -166,4 +163,36 @@ func Request(ctx context.Context, config Config) (*http.Response, string, error)
 	respData, err := ioutil.ReadAll(resp.Body)
 
 	return resp, string(respData), err
+}
+
+// Get is a simple wrapper for get request
+func Get(url string) (resp *http.Response, body string, err error) {
+	config := Config{
+		Method: "GET",
+		URL:    url,
+	}
+
+	return Request(context.Background(), config)
+}
+
+// Post is a simple wrapper for post request
+func Post(url string, payload map[string]interface{}) (resp *http.Response, body string, err error) {
+	config := Config{
+		Method: "POST",
+		URL:    url,
+		Body:   payload,
+	}
+
+	return Request(context.Background(), config)
+}
+
+// Put is a simple wrapper for put request
+func Put(url string, payload map[string]interface{}) (resp *http.Response, body string, err error) {
+	config := Config{
+		Method: "PUT",
+		URL:    url,
+		Body:   payload,
+	}
+
+	return Request(context.Background(), config)
 }
