@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -37,19 +38,19 @@ type safeClient struct {
 
 var defaultTransport = &http.Transport{
 	Dial: (&net.Dialer{
-		KeepAlive: 5 * time.Second,
-		Timeout:   2 * time.Second, // TCP connection timeout
+		KeepAlive: 120 * time.Second,
+		Timeout:   100 * time.Second, // TCP connection timeout
 	}).Dial,
-	TLSHandshakeTimeout:   5 * time.Second,
-	ResponseHeaderTimeout: 5 * time.Second,
-	IdleConnTimeout:       5 * time.Second,
+	TLSHandshakeTimeout:   100 * time.Second,
+	ResponseHeaderTimeout: 100 * time.Second,
+	IdleConnTimeout:       100 * time.Second,
 	MaxIdleConns:          100,
 	MaxIdleConnsPerHost:   100,
 }
 
 var client = &http.Client{
 	Transport: defaultTransport,
-	Timeout:   2 * time.Second, // default to 5 second to timeout a request
+	Timeout:   100 * time.Second, // default to 15 second to timeout a request
 }
 
 type Config struct {
@@ -60,17 +61,13 @@ type Config struct {
 	ResponseType string
 	IsBot        bool
 	Body         map[string]interface{}
-	Timeout      *time.Duration
-	OnTimeout    func(client *http.Client) // client timeout
+	Timeout      time.Duration
+	TimeoutChan  chan *http.Request
 }
 
 func checkConfig(config Config) error {
 	if config.URL == "" || config.Method == "" {
-		return fmt.Errorf("URL and method can not be nil")
-	}
-
-	if config.Method == MethodPost && config.Body == nil {
-		return fmt.Errorf("method post must have body")
+		return errors.New("URL and method can not be nil")
 	}
 
 	return nil
@@ -86,6 +83,19 @@ func setHeaders(c *Config, req *http.Request) error {
 	}
 
 	return nil
+}
+
+func handleTimeout(ctx context.Context, req *http.Request, reqCh chan *http.Request) {
+	select {
+	case <-ctx.Done():
+		log.Println("DONE REQUEST")
+		return
+	default:
+		if reqCh != nil {
+			reqCh <- req
+		}
+		return
+	}
 }
 
 func Request(ctx context.Context, config Config) (*http.Response, string, error) {
@@ -143,23 +153,13 @@ func Request(ctx context.Context, config Config) (*http.Response, string, error)
 		}
 	}
 
-	if config.Timeout != nil {
-		client.Timeout = *config.Timeout
-	}
-
+	client.Timeout = config.Timeout
 	resp, err := client.Do(request)
 
-	select {
-	case <-ctx.Done():
-		log.Println("DONE REQUEST")
-	default:
-		if config.OnTimeout != nil {
-			config.OnTimeout(client)
-		}
-	}
+	// TODO: feels like redundant...
+	go handleTimeout(ctx, request, config.TimeoutChan)
 
 	if err != nil {
-		log.Fatal(err)
 		return nil, "", err
 	}
 
